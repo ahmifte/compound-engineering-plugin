@@ -12,7 +12,7 @@ const releasePleaseConfig = await readJson<{ packages: Record<string, unknown> }
 const manifest = await readJson<ReleasePleaseManifest>(
   path.join(process.cwd(), ".github", ".release-please-manifest.json"),
 )
-const configErrors = validateReleasePleaseConfig(releasePleaseConfig)
+const configErrors = validateReleasePleaseConfig(releasePleaseConfig, manifest)
 const counts = await getCompoundEngineeringCounts(process.cwd())
 const result = await syncReleaseMetadata({
   write: false,
