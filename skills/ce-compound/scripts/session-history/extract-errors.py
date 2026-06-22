@@ -105,6 +105,20 @@ def handle_pi(obj):
     if obj.get("type") != "message":
         return
     msg = obj.get("message", {})
+    if msg.get("role") == "bashExecution":
+        exit_code = msg.get("exitCode")
+        if exit_code in (None, 0) and not msg.get("cancelled"):
+            return
+        ts = obj.get("timestamp", "")[:19]
+        command = msg.get("command", "")
+        output = msg.get("output", "")
+        summary = summarize_error(output)
+        status = "cancelled" if msg.get("cancelled") else f"exit={exit_code}"
+        print(f"[{ts}] [error] {status} cmd={command[:120]}: {summary}")
+        print("---")
+        stats["errors_found"] += 1
+        return
+
     if msg.get("role") != "toolResult":
         return
     content = msg.get("content", [])

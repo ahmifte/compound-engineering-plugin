@@ -799,6 +799,45 @@ describe("extract-errors", () => {
     expect(meta.parse_errors).toBe(0)
   })
 
+  test("extracts Pi bashExecution errors", async () => {
+    const lines = [
+      JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "test-pi-bash-session",
+        timestamp: "2026-04-07T09:00:00.000Z",
+        cwd: "/Users/test/Code/my-repo",
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "bash1",
+        parentId: null,
+        timestamp: "2026-04-07T09:02:00.000Z",
+        message: {
+          role: "bashExecution",
+          command: "bun test tests/session-history-scripts.test.ts",
+          output: "1 test failed\nerror: expected 0 failures",
+          exitCode: 1,
+          cancelled: false,
+          truncated: false,
+          timestamp: 1775542920000,
+        },
+      }),
+    ]
+    const { stdout, exitCode } = await runScript(
+      "extract-errors.py",
+      [],
+      lines.join("\n")
+    )
+    expect(exitCode).toBe(0)
+    expect(stdout).toContain(
+      "[error] exit=1 cmd=bun test tests/session-history-scripts.test.ts: 1 test failed"
+    )
+    const meta = JSON.parse(stdout.trim().split("\n").at(-1)!)
+    expect(meta.errors_found).toBe(1)
+    expect(meta.parse_errors).toBe(0)
+  })
+
   test("outputs _meta with error count", async () => {
     const fixture = await Bun.file(
       path.join(FIXTURES_DIR, "claude-session.jsonl")
