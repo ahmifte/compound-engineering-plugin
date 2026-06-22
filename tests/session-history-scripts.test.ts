@@ -189,6 +189,74 @@ function createPiSummaryContextSession(): string {
   return `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`
 }
 
+function createPiToolCallAndCustomSession(): string {
+  const lines = [
+    {
+      type: "session",
+      version: 3,
+      id: "test-pi-toolcall-custom-session",
+      timestamp: "2026-04-07T09:00:00.000Z",
+      cwd: "/Users/test/Code/my-repo",
+    },
+    {
+      type: "message",
+      id: "user1",
+      parentId: null,
+      timestamp: "2026-04-07T09:01:00.000Z",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "please check the failing auth flow" }],
+        timestamp: 1775542860000,
+      },
+    },
+    {
+      type: "message",
+      id: "assistant-tool",
+      parentId: "user1",
+      timestamp: "2026-04-07T09:02:00.000Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "toolu_pi_1",
+            name: "bash",
+            arguments: {
+              command: "bun test tests/auth-expiry.test.ts",
+            },
+          },
+          {
+            type: "toolCall",
+            id: "toolu_pi_2",
+            name: "readFile",
+            arguments: {
+              path: "src/auth/session-expiry.ts",
+            },
+          },
+        ],
+        timestamp: 1775542920000,
+      },
+    },
+    {
+      type: "message",
+      id: "custom1",
+      parentId: "assistant-tool",
+      timestamp: "2026-04-07T09:03:00.000Z",
+      message: {
+        role: "custom",
+        content: [
+          {
+            type: "text",
+            text: "custom_role_keyword extension-injected context",
+          },
+        ],
+        timestamp: 1775542980000,
+      },
+    },
+  ]
+  return `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`
+}
+
 // ---------------------------------------------------------------------------
 // extract-metadata.py
 // ---------------------------------------------------------------------------
@@ -437,6 +505,60 @@ describe("extract-metadata", () => {
         const outputLines = parseJsonLines(outputResult.stdout)
         expect(outputLines.filter((l) => !l._meta).length).toBe(0)
         expect(outputLines.find((l) => l._meta).files_matched).toBe(0)
+      } finally {
+        await fs.promises.rm(tempDir, { recursive: true, force: true })
+      }
+    })
+
+    test("Pi assistant toolCall targets are searchable", async () => {
+      const tempDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), "pi-toolcall-keyword-")
+      )
+      const sessionPath = path.join(tempDir, "pi-toolcall-session.jsonl")
+
+      try {
+        await fs.promises.writeFile(
+          sessionPath,
+          createPiToolCallAndCustomSession()
+        )
+
+        for (const keyword of ["auth-expiry.test.ts", "session-expiry.ts"]) {
+          const { stdout, exitCode } = await runScript("extract-metadata.py", [
+            "--keyword",
+            keyword,
+            sessionPath,
+          ])
+          expect(exitCode).toBe(0)
+          const lines = parseJsonLines(stdout)
+          expect(lines.filter((l) => !l._meta).length).toBe(1)
+          expect(lines.find((l) => l._meta).files_matched).toBe(1)
+        }
+      } finally {
+        await fs.promises.rm(tempDir, { recursive: true, force: true })
+      }
+    })
+
+    test("Pi custom-role message content is searchable", async () => {
+      const tempDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), "pi-custom-keyword-")
+      )
+      const sessionPath = path.join(tempDir, "pi-custom-session.jsonl")
+
+      try {
+        await fs.promises.writeFile(
+          sessionPath,
+          createPiToolCallAndCustomSession()
+        )
+
+        const { stdout, exitCode } = await runScript("extract-metadata.py", [
+          "--keyword",
+          "custom_role_keyword",
+          sessionPath,
+        ])
+        expect(exitCode).toBe(0)
+        const lines = parseJsonLines(stdout)
+        expect(lines.filter((l) => !l._meta).length).toBe(1)
+        expect(lines.find((l) => l._meta).files_matched).toBe(1)
       } finally {
         await fs.promises.rm(tempDir, { recursive: true, force: true })
       }
@@ -879,6 +1001,16 @@ describe("extract-skeleton", () => {
     expect(stdout).toContain("kept_after_compaction_keyword")
     expect(stdout).not.toContain("old_compacted_keyword")
     expect(stdout).not.toContain("old-compacted.test.ts")
+  })
+
+  test("extracts Pi custom-role messages in skeleton output", async () => {
+    const { stdout, exitCode } = await runScript(
+      "extract-skeleton.py",
+      [],
+      createPiToolCallAndCustomSession()
+    )
+    expect(exitCode).toBe(0)
+    expect(stdout).toContain("custom_role_keyword")
   })
 
   test("outputs _meta with stats", async () => {
@@ -1453,6 +1585,46 @@ describe("discover-sessions", () => {
     const { stdout, stderr, exitCode } = await runDiscover(
       ["my-repo", "7", "--platform", "pi"],
       { HOME: tempHome }
+    )
+
+    expect(exitCode).toBe(0)
+    expect(stderr).toBe("")
+    const files = stdout.trim().split("\n").filter((l) => l.trim())
+    expect(files).toEqual([sessionPath])
+  })
+
+  test("--platform pi honors PI_CODING_AGENT_SESSION_DIR", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-home-"))
+    const sessionBase = fs.mkdtempSync(path.join(os.tmpdir(), "pi-sessions-"))
+    const sessionPath = path.join(
+      sessionBase,
+      "--Users-test-Code-my-repo--/2026-04-07T09-00-00-000Z_test.jsonl"
+    )
+    await writeFixture(sessionPath, "pi-session.jsonl")
+
+    const { stdout, stderr, exitCode } = await runDiscover(
+      ["my-repo", "7", "--platform", "pi"],
+      { HOME: tempHome, PI_CODING_AGENT_SESSION_DIR: sessionBase }
+    )
+
+    expect(exitCode).toBe(0)
+    expect(stderr).toBe("")
+    const files = stdout.trim().split("\n").filter((l) => l.trim())
+    expect(files).toEqual([sessionPath])
+  })
+
+  test("--platform pi honors PI_CODING_AGENT_DIR sessions subdirectory", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-home-"))
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-"))
+    const sessionPath = path.join(
+      agentDir,
+      "sessions/--Users-test-Code-my-repo--/2026-04-07T09-00-00-000Z_test.jsonl"
+    )
+    await writeFixture(sessionPath, "pi-session.jsonl")
+
+    const { stdout, stderr, exitCode } = await runDiscover(
+      ["my-repo", "7", "--platform", "pi"],
+      { HOME: tempHome, PI_CODING_AGENT_DIR: agentDir }
     )
 
     expect(exitCode).toBe(0)

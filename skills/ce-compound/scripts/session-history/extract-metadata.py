@@ -179,6 +179,22 @@ def _append_pi_content_text(chunks, content):
                 chunks.append(block.get("text", ""))
 
 
+def _append_pi_tool_call_targets(chunks, content):
+    """Append searchable Pi toolCall targets without indexing tool output."""
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "toolCall":
+            continue
+        args = block.get("arguments", {})
+        if not isinstance(args, dict):
+            continue
+        for key in ("path", "file_path", "command", "pattern", "query", "prompt"):
+            value = args.get(key)
+            if isinstance(value, str):
+                chunks.append(value)
+
+
 def _extract_user_assistant_text(filepath):
     """Return concatenated user + assistant text content from a session JSONL.
 
@@ -263,9 +279,15 @@ def _extract_user_assistant_text(filepath):
                     # Search command text only. Output is tool output and can
                     # be large/noisy in the same way as toolResult content.
                     continue
+                content = msg.get("content", [])
+                if role == "custom":
+                    _append_pi_content_text(chunks, content)
+                    continue
                 if role not in ("user", "assistant"):
                     continue
-                _append_pi_content_text(chunks, msg.get("content", []))
+                _append_pi_content_text(chunks, content)
+                if role == "assistant":
+                    _append_pi_tool_call_targets(chunks, content)
                 continue
 
             if t in ("compaction", "branch_summary"):

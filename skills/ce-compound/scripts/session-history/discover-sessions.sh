@@ -66,7 +66,8 @@ discover_cursor() {
 
 # --- Pi ---
 discover_pi() {
-    local base="$HOME/.pi/agent/sessions"
+    local agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+    local base="${PI_CODING_AGENT_SESSION_DIR:-$agent_dir/sessions}"
     [ -d "$base" ] || return 0
 
     # Pi stores sessions under --<absolute-cwd-with-slashes-as-hyphens>--.

@@ -373,6 +373,15 @@ def handle_pi(obj):
         pending_tools.append({"ts": ts, "name": "bash", "target": command, "status": status})
         return
 
+    if role == "custom":
+        text = clean_text(" ".join(_pi_text_content(content)))
+        if len(text) > 15:
+            flush_tools()
+            print(f"[{ts}] [summary] {text[:800]}")
+            print("---")
+            stats["summary"] += 1
+        return
+
     if role == "user":
         text = clean_text(" ".join(_pi_text_content(content)))
         if len(text) > 15:
