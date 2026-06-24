@@ -9,14 +9,12 @@
   "repository": "https://github.com/EveryInc/compound-engineering-plugin",
   "license": "MIT",
   "keywords": [
-    "ai-powered",
-    "compound-engineering",
-    "workflow-automation",
+    "brainstorming",
     "code-review",
-    "rails",
-    "ruby",
-    "python",
-    "typescript",
-    "knowledge-management"
+    "compound-engineering",
+    "debugging",
+    "ideation",
+    "workflows",
+    "workflow-automation"
   ]
 }
