@@ -77,10 +77,10 @@ export type CompoundEngineeringCounts = {
 }
 
 const COMPOUND_ENGINEERING_DESCRIPTION =
-  "AI-powered development tools for code review, research, design, and workflow automation."
+  "Brainstorm, plan, debug, review, and compound learnings with AI agents"
 
 const COMPOUND_ENGINEERING_MARKETPLACE_DESCRIPTION =
-  "AI-powered development tools that get smarter with every use. Make each unit of engineering work easier than the last."
+  "Brainstorm, plan, debug, review, and compound learnings with AI agents"
 
 function resolveExpectedVersion(
   explicitVersion: string | undefined,

@@ -1,30 +1,26 @@
 {
   "name": "compound-engineering",
   "version": "3.14.0",
-  "description": "AI-powered development tools for code review, research, design, and workflow automation.",
+  "description": "Brainstorm, plan, debug, review, and compound learnings with AI agents",
   "author": {
-    "name": "Kieran Klaassen",
-    "email": "kieran@every.to",
-    "url": "https://github.com/kieranklaassen"
+    "name": "Kieran Klaassen and Trevin Chow"
   },
   "homepage": "https://every.to/source-code/my-ai-had-already-fixed-the-code-before-i-saw-it",
   "repository": "https://github.com/EveryInc/compound-engineering-plugin",
   "license": "MIT",
   "keywords": [
-    "ai-powered",
-    "compound-engineering",
-    "workflow-automation",
+    "brainstorming",
     "code-review",
-    "rails",
-    "ruby",
-    "python",
-    "typescript",
-    "knowledge-management"
+    "compound-engineering",
+    "debugging",
+    "ideation",
+    "workflows",
+    "workflow-automation"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Compound Engineering",
-    "shortDescription": "Brainstorming, planning, debugging, and autonomous workflows for AI agents",
+    "shortDescription": "Brainstorm, plan, debug, review, and compound learnings with AI agents",
     "longDescription": "Compound Engineering guides AI agents through the full engineering loop: strategy, ideation, requirements, planning, execution, debugging, review, PR feedback, and captured learnings that make future work easier.",
     "developerName": "Kieran Klaassen and Trevin Chow",
     "category": "Coding",
@@ -42,6 +38,7 @@
       "/ce-code-review my changes"
     ],
     "brandColor": "#C9EFFA",
+    "composerIcon": "./assets/logo.png",
     "logo": "./assets/logo.png",
     "screenshots": []
   }
