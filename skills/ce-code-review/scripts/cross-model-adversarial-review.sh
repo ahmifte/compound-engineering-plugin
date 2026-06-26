@@ -54,6 +54,10 @@ PEERLOG="$(mktemp "${TMPDIR:-/tmp}/xmodel-log-XXXXXX")"
 trap 'rm -f "$PROMPT_FILE" "$PEERLOG"' EXIT
 
 # --- compose the peer prompt from the canonical persona (single source) ----
+# The full findings schema is embedded so BOTH peers know every required field
+# (why_it_matters, confidence, evidence, routing) -- Codex gets no --output-schema
+# (its strict mode rejects the permissive draft-07 schema), so the prompt is its
+# only schema signal. Verified to produce complete, schema-shaped findings.
 {
   cat "$PERSONA"
   printf '\n\n---\n\n'
@@ -65,56 +69,39 @@ trap 'rm -f "$PROMPT_FILE" "$PEERLOG"' EXIT
   printf '\n\nSet the top-level "reviewer" field to "adversarial-%s".\n' "$PEER"
 } > "$PROMPT_FILE"
 
-# --- timeouts --------------------------------------------------------------
-IDLE_SECS="${CROSS_MODEL_IDLE_SECS:-180}"   # kill if streamed output stalls this long (codex only)
-HARD_SECS="${CROSS_MODEL_HARD_SECS:-540}"   # absolute ceiling for either peer
-
-# Background a peer function, stream its combined output to $PEERLOG, and kill it
-# on a hard ceiling -- plus, when idle detection is enabled (streaming peers), kill
-# it if $PEERLOG stops growing for IDLE_SECS. Claude's `--output-format json` emits
-# once at the end (no incremental growth), so idle detection is disabled there.
-supervise() {
-  local idle_enabled="$1" fn="$2"
-  "$fn" >"$PEERLOG" 2>&1 &
-  local pid=$! start now size last=-1 lastchg
-  start=$(date +%s); lastchg=$start
-  while kill -0 "$pid" 2>/dev/null; do
-    sleep 5; now=$(date +%s)
-    size=$(wc -c <"$PEERLOG" 2>/dev/null || echo 0)
-    if [ "$size" != "$last" ]; then last="$size"; lastchg="$now"; fi
-    if [ "$idle_enabled" = 1 ] && [ $(( now - lastchg )) -ge "$IDLE_SECS" ]; then
-      log "$PEER idle ${IDLE_SECS}s with no new output; killing"; kill "$pid" 2>/dev/null; break
-    fi
-    if [ $(( now - start )) -ge "$HARD_SECS" ]; then
-      log "$PEER hit hard cap ${HARD_SECS}s; killing"; kill "$pid" 2>/dev/null; break
-    fi
-  done
-  wait "$pid" 2>/dev/null || true
+# --- bound the peer process itself (not just the wrapper) ------------------
+# A Bash-tool timeout only bounds this wrapper; a backgrounded peer could outlive
+# it and write OUT after the caller already skipped, leaking orphan model calls.
+# gtimeout/timeout kill the whole process tree on expiry (-k escalates to SIGKILL);
+# perl(alarm) is a last-resort fallback. We run the peer in the FOREGROUND under the
+# timeout, so it is fully settled before this script returns -- no orphan.
+HARD_SECS="${CROSS_MODEL_HARD_SECS:-300}"
+_timeout() {
+  local secs="$1"; shift
+  if   command -v gtimeout >/dev/null 2>&1; then gtimeout -k 10 "$secs" "$@"
+  elif command -v timeout  >/dev/null 2>&1; then timeout  -k 10 "$secs" "$@"
+  else perl -e 'alarm shift; exec @ARGV' "$secs" "$@"; fi
 }
 
-run_codex() {
-  # Codex writes the schema-shaped final message to $OUT itself (-o), which works
-  # under -s read-only. It streams reasoning to stdout, so idle detection applies.
-  codex exec - -C "$REPO_ROOT" -s read-only -o "$OUT" \
-    -c 'model_reasoning_effort="high"' < "$PROMPT_FILE"
-}
-
-run_claude() {
-  # Claude can't write a file under dontAsk + disallowed Write, so it emits the JSON
-  # envelope on stdout (captured into $PEERLOG) and we extract it afterward.
-  claude -p --model opus --permission-mode dontAsk \
-    --disallowedTools "Edit Write NotebookEdit" --max-turns 15 --no-session-persistence \
-    --json-schema "$(cat "$SCHEMA")" --output-format json \
-    "$(cat "$PROMPT_FILE")" < /dev/null
-}
-
-log "running $PEER adversarial review against base $BASE (read-only)"
+log "running $PEER adversarial review against base $BASE (read-only, cap ${HARD_SECS}s)"
 case "$PEER" in
   codex)
-    supervise 1 run_codex
+    # Codex writes the schema-shaped final message to OUT itself (-o), which works
+    # under -s read-only. No --output-schema (strict mode rejects the draft-07 schema).
+    _timeout "$HARD_SECS" codex exec - -C "$REPO_ROOT" -s read-only -o "$OUT" \
+      -c 'model_reasoning_effort="high"' < "$PROMPT_FILE" >/dev/null 2>&1 \
+      || log "codex exited non-zero or timed out"
     ;;
   claude)
-    supervise 0 run_claude
+    # Claude can't write a file under dontAsk + disallowed Write, so it emits the
+    # JSON envelope on stdout (captured to PEERLOG) and we extract it. disallowed
+    # tools are passed as SEPARATE variadic args (unambiguous; a single quoted
+    # "Edit Write NotebookEdit" string is risky given tool names can contain spaces).
+    _timeout "$HARD_SECS" claude -p --model opus --permission-mode dontAsk \
+      --disallowedTools Edit Write NotebookEdit --max-turns 15 --no-session-persistence \
+      --json-schema "$(cat "$SCHEMA")" --output-format json \
+      "$(cat "$PROMPT_FILE")" < /dev/null > "$PEERLOG" 2>/dev/null \
+      || log "claude exited non-zero or timed out"
     # Prefer the parsed structured object; fall back to the .result string.
     jq -e '.structured_output' "$PEERLOG" > "$OUT" 2>/dev/null \
       || jq -r '.result // empty' "$PEERLOG" | jq -e '.' > "$OUT" 2>/dev/null \
