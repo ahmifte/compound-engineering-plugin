@@ -149,7 +149,7 @@ describe("ce-plan post-generation menu routing", () => {
         `${label} must not describe goal availability as slash-command-only; use goal capability and Codex create_goal instead.`,
       ).toBe(false)
       expect(
-        /Codex [`"]?request_user_input[`"]?[\s\S]{0,80}no option cap/i.test(body),
+        /(?:Codex [`"]?request_user_input[`"]?[\s\S]{0,120}no option cap|no option cap[\s\S]{0,120}Codex [`"]?request_user_input[`"]?)/i.test(body),
         `${label} must not claim Codex request_user_input has no option cap; current Codex question tools only allow 2-3 explicit options.`,
       ).toBe(false)
 
