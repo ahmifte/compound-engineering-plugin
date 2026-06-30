@@ -37,8 +37,6 @@ This workflow drives the browser exclusively through the `agent-browser` CLI. Do
 | Committing each fix | `ce-commit` | Consistent, well-scoped commit messages. |
 | A bug reveals a reusable lesson | `ce-compound` | Capture the learning so the team compounds knowledge. |
 
-(If `agent-browser` is missing, direct the user to install it — `/ce-setup` prints the current command. See Prerequisites.)
-
 ## Workflow
 
 ```
@@ -197,18 +195,4 @@ Keep iterating until every task is `completed` or in a terminal `Blocked` state 
 
 The report doc was created at the end of Phase 2 and updated incrementally throughout (see Resumability). When the matrix is green (or every remaining item is explicitly blocked), **finalize** it at `docs/dogfood-reports/<YYYY-MM-DD>-<branch-slug>-dogfood.md` in the repo under test, then surface a short summary in chat with the file path.
 
-Use `references/dogfood-report-template.md` as the shape — the same way plans and brainstorms are captured from a template. The finalized artifact must include:
-
-1. **Diff Summary** — what changed between the branch and the trunk.
-2. **Personas** — the primary personas evaluated against (and their source: STRATEGY.md / VISION.md / inferred).
-3. **Flows tested** — the Mermaid flowcharts from Phase 2a, so the journeys are preserved.
-4. **Test Matrix & Results** — every scenario: what was tested, pass/fail, issue found, fix applied, commit SHA.
-5. **What was fixed** — each bug, its root cause, the fix, the regression test added (or why none was meaningful), and the commit.
-6. **Paper cuts (by persona)** — experiential friction found, which persona feels each, severity, and whether fixed or deferred.
-7. **Console Errors** — any console or network errors observed, and whether they were resolved.
-8. **Human Verifications** — external-interaction legs (OAuth, email, payments, SMS): confirmed, pending, or not applicable.
-9. **Decisions for a human** — issues too big to fix autonomously: what's broken, why it was escalated, options with trade-offs, and a recommendation.
-10. **Learnings** — reusable lessons worth carrying forward (feed substantial ones to `ce-compound`).
-11. **Final Status** — readiness verdict (including the automated-suite result), plus anything still blocked or needing human verification.
-
-Use repo-relative paths in the doc, never absolute paths, so it stays portable.
+**Read `references/dogfood-report-template.md` now and build the report to its section shape** — the template owns the required sections and what each must carry. Do not reconstruct the section list from memory; that drifts from the template. While filling it, carry forward the cross-phase obligations this skill produced: the Mermaid flowcharts from Phase 2a, a matrix row per scenario with its commit SHA, each fix's root cause and the regression test added (or why none was meaningful), paper cuts attributed by persona, learnings worth feeding to `ce-compound`, and a final readiness verdict that records the Phase 5 automated-suite result.
