@@ -92,7 +92,7 @@ def safe_extract(zip_path: Path, dest: Path) -> None:
         for member in archive.infolist():
             member_path = dest / member.filename
             resolved = member_path.resolve()
-            if not (resolved == dest_resolved or dest_resolved in resolved.parents):
+            if not resolved.is_relative_to(dest_resolved):
                 raise RuntimeError(f"Unsafe zip member path: {member.filename}")
             if member.is_dir():
                 resolved.mkdir(parents=True, exist_ok=True)

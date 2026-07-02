@@ -71,6 +71,32 @@ function upsert(
 function read(dir: string, s: string) {
   return payload(run(dir, "read", "--state", s).stdout)
 }
+function cursorAdvance(
+  dir: string,
+  s: string,
+  source: string,
+  to: string,
+  pastItem: string,
+  writer = "w1",
+  now = NOW,
+) {
+  return run(
+    dir,
+    "cursor-advance",
+    "--state",
+    s,
+    "--source",
+    source,
+    "--to",
+    to,
+    "--past-item",
+    pastItem,
+    "--writer",
+    writer,
+    "--now",
+    now,
+  )
+}
 
 describe("sweep-state engine — core round-trip and lifecycle", () => {
   test("upsert then read round-trips the item", () => {
@@ -79,7 +105,7 @@ describe("sweep-state engine — core round-trip and lifecycle", () => {
     expect(status(acquire(dir, s).stdout)).toBe("OK")
     expect(
       status(
-        upsert(dir, s, "slack:C1:100.5", "slack:C1", {
+        upsert(dir, s, "100.5", "slack:C1", {
           status: "ingested",
           body: "hello world",
         }).stdout,
@@ -88,9 +114,23 @@ describe("sweep-state engine — core round-trip and lifecycle", () => {
     const rd = run(dir, "read", "--state", s)
     expect(status(rd.stdout)).toBe("OK")
     const state = payload(rd.stdout)
+    // Items are stored under a source-scoped composite key so ids never collide
+    // across sources; the item stays self-describing via source + id.
     expect(state.items["slack:C1:100.5"].status).toBe("ingested")
     expect(state.items["slack:C1:100.5"].body).toBe("hello world")
     expect(state.items["slack:C1:100.5"].source).toBe("slack:C1")
+    expect(state.items["slack:C1:100.5"].id).toBe("100.5")
+  })
+
+  test("the same id under two sources does not collide", () => {
+    const dir = tmp()
+    const s = statePath(dir)
+    acquire(dir, s)
+    upsert(dir, s, "123", "slack-alpha", { status: "ingested", body: "from slack" })
+    upsert(dir, s, "123", "gh-issues", { status: "ingested", body: "from github" })
+    const items = read(dir, s).items
+    expect(items["slack-alpha:123"].body).toBe("from slack")
+    expect(items["gh-issues:123"].body).toBe("from github")
   })
 
   test("read on an absent file is NO-STATE", () => {
@@ -112,7 +152,7 @@ describe("sweep-state engine — core round-trip and lifecycle", () => {
     })
     // A later upsert replaces only `status`; every other field must survive.
     upsert(dir, s, "i1", "src1", { status: "analyzed" })
-    const item = read(dir, s).items.i1
+    const item = read(dir, s).items["src1:i1"]
     expect(item.status).toBe("analyzed")
     expect(item.keep).toBe("me")
     expect(item.weird).toEqual({ nested: { deep: [1, 2, 3] } })
@@ -123,7 +163,7 @@ describe("sweep-state engine — core round-trip and lifecycle", () => {
     const s = statePath(dir)
     acquire(dir, s)
     upsert(dir, s, "i1", "src1", { status: "some_future_status" })
-    expect(read(dir, s).items.i1.status).toBe("some_future_status")
+    expect(read(dir, s).items["src1:i1"].status).toBe("some_future_status")
   })
 })
 
@@ -133,24 +173,12 @@ describe("sweep-state engine — cursors", () => {
     const s = statePath(dir)
     acquire(dir, s)
     upsert(dir, s, "i1", "src1", {})
-    expect(
-      status(
-        run(dir, "cursor-advance", "--state", s, "--source", "src1", "--to", "200", "--past-item", "i1", "--writer", "w1", "--now", NOW).stdout,
-      ),
-    ).toBe("OK")
+    expect(status(cursorAdvance(dir, s, "src1", "200", "i1").stdout)).toBe("OK")
     expect(payload(run(dir, "cursor-get", "--state", s, "--source", "src1").stdout).cursor).toBe("200")
     // regression
-    expect(
-      status(
-        run(dir, "cursor-advance", "--state", s, "--source", "src1", "--to", "100", "--past-item", "i1", "--writer", "w1", "--now", NOW).stdout,
-      ),
-    ).toBe("REFUSED")
+    expect(status(cursorAdvance(dir, s, "src1", "100", "i1").stdout)).toBe("REFUSED")
     // unknown item id
-    expect(
-      status(
-        run(dir, "cursor-advance", "--state", s, "--source", "src1", "--to", "300", "--past-item", "nope", "--writer", "w1", "--now", NOW).stdout,
-      ),
-    ).toBe("REFUSED")
+    expect(status(cursorAdvance(dir, s, "src1", "300", "nope").stdout)).toBe("REFUSED")
     // cursor unchanged after both refusals
     expect(payload(run(dir, "cursor-get", "--state", s, "--source", "src1").stdout).cursor).toBe("200")
   })
@@ -160,12 +188,8 @@ describe("sweep-state engine — cursors", () => {
     const s = statePath(dir)
     acquire(dir, s)
     upsert(dir, s, "i1", "src1", {})
-    run(dir, "cursor-advance", "--state", s, "--source", "src1", "--to", "200", "--past-item", "i1", "--writer", "w1", "--now", NOW)
-    expect(
-      status(
-        run(dir, "cursor-advance", "--state", s, "--source", "src1", "--to", "200", "--past-item", "i1", "--writer", "w1", "--now", NOW).stdout,
-      ),
-    ).toBe("OK")
+    cursorAdvance(dir, s, "src1", "200", "i1")
+    expect(status(cursorAdvance(dir, s, "src1", "200", "i1").stdout)).toBe("OK")
   })
 
   test("cursor-get returns null for an unknown source", () => {
@@ -260,7 +284,7 @@ describe("sweep-state engine — sensitivity redaction", () => {
       status: "ingested",
       title: "ok to keep",
     })
-    const item = read(dir, s).items.i1
+    const item = read(dir, s).items["src1:i1"]
     expect(item.body).toBeUndefined()
     expect(item.quote).toBeUndefined()
     expect(item.sensitive).toBe(true)
@@ -291,7 +315,7 @@ describe("sweep-state engine — sensitivity redaction", () => {
       quote: "hush",
       title: "keep",
     })
-    const item = read(dir, s).items.i1
+    const item = read(dir, s).items["src1:i1"]
     expect(item.body).toBeUndefined()
     expect(item.quote).toBeUndefined()
     expect(item.title).toBe("keep")
@@ -306,8 +330,8 @@ describe("sweep-state engine — validate (closed-item evidence rule)", () => {
     upsert(dir, s, "i1", "src1", { status: "closed" })
     const v = run(dir, "validate", "--state", s)
     expect(status(v.stdout)).toBe("OK")
-    expect(payload(v.stdout).downgraded).toContain("i1")
-    expect(read(dir, s).items.i1.status).toBe("fix_pending")
+    expect(payload(v.stdout).downgraded).toContain("src1:i1")
+    expect(read(dir, s).items["src1:i1"].status).toBe("fix_pending")
   })
 
   test("validate leaves a closed item WITH full evidence intact", () => {
@@ -322,7 +346,7 @@ describe("sweep-state engine — validate (closed-item evidence rule)", () => {
     })
     const v = run(dir, "validate", "--state", s)
     expect(payload(v.stdout).downgraded).toEqual([])
-    expect(read(dir, s).items.i1.status).toBe("closed")
+    expect(read(dir, s).items["src1:i1"].status).toBe("closed")
   })
 })
 
@@ -404,6 +428,23 @@ describe("sweep-state engine — import-legacy", () => {
     expect(r.code).toBe(0)
     expect(status(r.stdout)).toBe("OK")
     expect(payload(r.stdout)).toEqual({ cursors_imported: 0, items_imported: 0 })
+  })
+
+  test("import-legacy never regresses an already-advanced cursor", () => {
+    const dir = tmp()
+    const s = statePath(dir)
+    acquire(dir, s)
+    upsert(dir, s, "i1", "C111", {})
+    // C111 has already swept forward past the legacy value.
+    cursorAdvance(dir, s, "C111", "1700000005.000000", "i1")
+    const legacy = path.join(dir, "legacy.json")
+    writeFileSync(
+      legacy,
+      JSON.stringify({ channels: { C111: { last_processed_ts: "1699999999.000100" } } }),
+    )
+    run(dir, "import-legacy", "--state", s, "--file", legacy)
+    // A re-import must not rewind the cursor and re-ingest everything since.
+    expect(read(dir, s).sources.C111.cursor).toBe("1700000005.000000")
   })
 })
 

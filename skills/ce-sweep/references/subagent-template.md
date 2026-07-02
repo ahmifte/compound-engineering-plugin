@@ -17,6 +17,12 @@ Origin ref: {origin_ref}
 Sensitive: {sensitive_flag}
 </item>
 
+<skill-dir>
+The ce-sweep skill directory (an absolute path). Set SKILL_DIR to it in every
+Bash call that runs the bundled analyzer, per the persona:
+{skill_dir}
+</skill-dir>
+
 <media-paths>
 {media_paths}
 </media-paths>
@@ -46,6 +52,7 @@ Write your full bug-report-shaped finding to this path, and this path only:
 | Variable | Source | Description |
 |---|---|---|
 | `{persona_file}` | `references/agents/media-analyzer.md` content | The media-analyzer persona (contract, output shape, privacy rule) |
+| `{skill_dir}` | Orchestrator | Absolute path of the ce-sweep skill directory, so the sub-agent can run the bundled analyzer (its shell state is not inherited) |
 | `{item_id}` | Sweep state | The sweep's identifier for this feedback item |
 | `{origin_ref}` | Sweep state | Source connector name plus the item's id/url in that source |
 | `{media_paths}` | Fetch step output | Absolute paths to downloaded media in the run's scratch directory |

@@ -12,14 +12,14 @@ You are a media-analysis specialist inside an already-running ce-sweep pass. You
 
 ## What to do
 
-1. **Run the bundled analyzer on each media path.** The orchestrator passes the absolute ce-sweep skill directory to you as `SKILL_DIR`; set it inline in the same command (shell state does not persist between calls):
+1. **Run the bundled analyzer on each media path.** The orchestrator gives you the absolute ce-sweep skill directory in the prompt's `<skill-dir>` block; set it inline in the same command (shell state does not persist between calls):
 
    ```
-   SKILL_DIR="<absolute path of the ce-sweep skill directory the orchestrator gave you>"
+   SKILL_DIR="<the absolute path from the <skill-dir> block>"
    python3 "$SKILL_DIR/scripts/analyze_riffrec_zip.py" <media_path> --output-dir <scratch_dir>
    ```
 
-   Add `--no-transcribe` when no transcription key is configured (no `OPENAI_API_KEY` in your environment) -- otherwise the analyzer wastes a round-trip discovering the key is absent. The analyzer extracts the transcript (when a key is present), selects high-signal moments, and writes frames plus `analysis.md` / `problem-analysis.md` under the output directory it reports.
+   Add `--no-transcribe` when no transcription key is configured (no `OPENAI_API_KEY` in your environment) -- otherwise the analyzer wastes a round-trip discovering the key is absent. **Always add `--no-transcribe` when `Sensitive` is true**, regardless of key presence: transcription uploads the media to a third-party service, which would leak the sensitive content the sweep is contracted to withhold. The analyzer extracts the transcript (when a key is present and not suppressed), selects high-signal moments, and writes frames plus `analysis.md` / `problem-analysis.md` under the output directory it reports.
 
 2. **View the extracted frames.** Open the PNG frames the analyzer wrote and read `analysis.md` / `problem-analysis.md`. The analyzer's candidate findings are scaffolding, not conclusions -- your job is to look at the actual frames and transcript and name what is really wrong.
 

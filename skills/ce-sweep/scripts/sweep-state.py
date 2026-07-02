@@ -46,14 +46,9 @@ from datetime import datetime, timezone
 
 SCHEMA_VERSION = 1
 
-# Closed lifecycle enum (documented in the schema). Unknown statuses are
-# preserved on write-back, never dropped — this list is for reference and for
-# the evidence rule, not a whitelist that rejects values.
-STATUSES = (
-    "ingested", "ack_deferred", "acknowledged", "needs_download",
-    "needs_analysis", "manual_stuck", "analyzed", "in_plan",
-    "fix_pending", "closed", "source_gone",
-)
+# The closed lifecycle status enum is documented in references/state-schema.md.
+# Unknown statuses are preserved on write-back, never dropped — nothing here
+# whitelists values.
 
 # A `closed` item MUST carry all three evidence fields; `validate` downgrades
 # any closed item missing any of them back to `fix_pending`.
@@ -116,7 +111,7 @@ def _emit_scalar(v):
         return repr(v)
     if isinstance(v, str):
         return json.dumps(v, ensure_ascii=False)
-    # dict / list → inline JSON flow (valid YAML), sorted for determinism.
+    # dict / list -> inline JSON flow (valid YAML), sorted for determinism.
     return json.dumps(v, ensure_ascii=False, sort_keys=True)
 
 
@@ -240,14 +235,33 @@ def parse_document(text):
 # State load / save
 # --------------------------------------------------------------------------- #
 
+def _item_key(source, item_id):
+    """Storage key for an item. The items keyspace is flat, so a bare id can
+    collide across sources (two Slack channels emitting the same ts, or a
+    source that reuses numeric ids). Namespacing by source keeps each source's
+    id space independent, matching the composite keys documented in
+    references/state-schema.md."""
+    return "{}:{}".format(source, item_id)
+
+
 def load_state(path):
     """Return (status, data): ('absent', None), ('corrupt', None), or
     ('ok', dict). A file that parses but lacks schema_version is corrupt."""
-    if not os.path.exists(path):
-        return ("absent", None)
     try:
         with open(path) as f:
+            # A machine-local state file can live under world-shared /tmp, and
+            # it is a correctness dependency (lease, cursors, closed status) as
+            # well as an injection sink (item bodies re-read into agent
+            # context). Reject a file not owned by us so a co-tenant cannot
+            # plant a forged lease/cursor or attacker-authored item text. Skip
+            # where geteuid is unavailable (non-POSIX), where the threat does
+            # not apply.
+            geteuid = getattr(os, "geteuid", None)
+            if geteuid is not None and os.fstat(f.fileno()).st_uid != geteuid():
+                return ("corrupt", None)
             text = f.read()
+    except FileNotFoundError:
+        return ("absent", None)
     except OSError:
         return ("corrupt", None)
     if not text.strip():
@@ -329,7 +343,7 @@ def current_lease(state):
 
 def lease_is_stale(lease, now_iso):
     """True only when we can PROVE the lease is older than its TTL. If either
-    timestamp is unparseable we cannot prove staleness → treat as live (do not
+    timestamp is unparseable we cannot prove staleness -> treat as live (do not
     reclaim). Conservative: never stomp a lease we cannot show is expired."""
     ts = _parse_iso(lease.get("timestamp", ""))
     now = _parse_iso(now_iso)
@@ -388,15 +402,29 @@ def cmd_validate(args):
     return emit("OK", {"downgraded": sorted(downgraded)})
 
 
-def cmd_upsert_item(args):
+def _load_owned_state(args):
+    """Load state for a lease-gated mutation. Returns (data, None) when
+    args.writer holds the lease, else (None, status_word) for the caller to
+    emit. Absent state means no lease to own -> the caller is not the owner."""
     st, data = load_state(args.state)
     if st == "corrupt":
-        return emit("CORRUPT")
-    if st == "absent":
-        # No state means no lease to own → the caller is not the owner.
-        return emit("LEASE-LOST")
-    if not owns_lease(data, args.writer):
-        return emit("LEASE-LOST")
+        return None, "CORRUPT"
+    if st == "absent" or not owns_lease(data, args.writer):
+        return None, "LEASE-LOST"
+    return data, None
+
+
+def _commit_owned(args, data):
+    """Shared tail for lease-gated mutations: re-stamp the lease, persist."""
+    restamp_lease(data, args.writer, resolve_now(args))
+    write_state(args.state, data)
+    return emit("OK")
+
+
+def cmd_upsert_item(args):
+    data, err = _load_owned_state(args)
+    if err:
+        return emit(err)
     try:
         incoming = json.loads(args.json)
     except (ValueError, TypeError):
@@ -405,12 +433,14 @@ def cmd_upsert_item(args):
         return emit("ERROR")
 
     items = data.setdefault("items", {})
-    existing = items.get(args.id)
+    key = _item_key(args.source, args.id)
+    existing = items.get(key)
     merged = dict(existing) if isinstance(existing, dict) else {}
     # id-keyed merge: only the keys present in the incoming item are replaced;
     # unknown fields already on the item survive untouched.
     merged.update(incoming)
     merged["source"] = args.source
+    merged["id"] = args.id
 
     source_entry = data.get("sources", {}).get(args.source, {})
     is_sensitive = (
@@ -421,10 +451,8 @@ def cmd_upsert_item(args):
         for f in ("body", "quote"):
             merged.pop(f, None)
 
-    items[args.id] = merged
-    restamp_lease(data, args.writer, resolve_now(args))
-    write_state(args.state, data)
-    return emit("OK")
+    items[key] = merged
+    return _commit_owned(args, data)
 
 
 def cmd_cursor_get(args):
@@ -439,16 +467,12 @@ def cmd_cursor_get(args):
 
 
 def cmd_cursor_advance(args):
-    st, data = load_state(args.state)
-    if st == "corrupt":
-        return emit("CORRUPT")
-    if st == "absent":
-        return emit("LEASE-LOST")
-    if not owns_lease(data, args.writer):
-        return emit("LEASE-LOST")
+    data, err = _load_owned_state(args)
+    if err:
+        return emit(err)
     # The cursor may only advance past an item that actually exists in state,
     # so a resume never skips unrecorded items.
-    if args.past_item not in data.get("items", {}):
+    if _item_key(args.source, args.past_item) not in data.get("items", {}):
         return emit("REFUSED")
     entry = data.setdefault("sources", {}).setdefault(args.source, {})
     current = entry.get("cursor")
@@ -459,9 +483,7 @@ def cmd_cursor_advance(args):
     if current is not None and str(args.to) < str(current):
         return emit("REFUSED")
     entry["cursor"] = args.to
-    restamp_lease(data, args.writer, resolve_now(args))
-    write_state(args.state, data)
-    return emit("OK")
+    return _commit_owned(args, data)
 
 
 def cmd_lease_acquire(args):
@@ -544,7 +566,10 @@ def cmd_import_legacy(args):
         cursors_imported = _import_channels(legacy, data)
         items_imported = _import_legacy_items(legacy, data)
 
-    write_state(args.state, data)
+    # Persist only when something changed: a fresh state file was seeded, or
+    # the import actually brought data in. A no-op import writes nothing.
+    if st == "absent" or cursors_imported or items_imported:
+        write_state(args.state, data)
     return emit("OK", {
         "cursors_imported": cursors_imported,
         "items_imported": items_imported,
@@ -581,6 +606,13 @@ def _import_channels(legacy, data):
         if cursor is None:
             continue
         entry = sources.setdefault(str(chan_id), {})
+        # Never regress an already-advanced cursor: a re-import against live
+        # state must not rewind a source to the legacy value and re-ingest
+        # (and re-acknowledge) everything since. Seed only when absent, or when
+        # the legacy value is not older than the current one.
+        current = entry.get("cursor")
+        if current is not None and str(cursor) < str(current):
+            continue
         entry["cursor"] = cursor
         count += 1
     return count

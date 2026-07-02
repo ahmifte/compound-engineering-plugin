@@ -51,8 +51,10 @@ describe("analyze_riffrec_zip safe_extract zip-slip guard", () => {
     const escaped = path.join(tmp, "rawX", "evil.txt")
     expect(existsSync(escaped)).toBe(false)
 
-    // And safe_extract must signal the unsafe path rather than extract it.
-    expect(run.stdout).toContain("SAFE_EXTRACT_RAISED")
+    // And safe_extract must reject it via the containment guard specifically
+    // (RuntimeError), not fail for some unrelated reason that also happens to
+    // skip the write.
+    expect(run.stdout).toContain("SAFE_EXTRACT_RAISED RuntimeError")
     expect(run.stdout).not.toContain("EXTRACT_RETURNED_NO_ERROR")
   })
 })

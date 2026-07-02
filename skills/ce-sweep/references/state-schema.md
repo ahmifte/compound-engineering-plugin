@@ -35,7 +35,7 @@ last_run:
 | `schema_version` | int | Contract version. Currently `1`. A file missing this key is treated as corrupt. |
 | `lease` | map | Single-writer mutex (see Lease). Absent when no writer holds it. |
 | `sources` | map keyed by source id | Per-source resume cursor and optional flags. |
-| `items` | map keyed by item id | Per-item lifecycle record. |
+| `items` | map keyed by `<source-id>:<item-id>` | Per-item lifecycle record. The key is source-scoped so a source-native id (a Slack ts, a GitHub issue number) never collides with the same id from another source. Personas pass a source-native `id` plus `--source`; the engine composes the storage key and records both `source` and `id` on the item so it stays self-describing. |
 | `last_run` | map | Bookkeeping for the most recent sweep (see run-record). |
 
 ## Compatibility rule (forward/backward)
@@ -92,13 +92,17 @@ start).
 
 ## `sensitive` semantics
 
-`sensitive: true` may appear on an item (per-item) or on a source entry
-(applies to all of that source's items; typically config-derived and seeded
-when the source is registered). On any `upsert-item` where either is true, the
-engine **drops `body` and `quote` before writing** — redacted content never
-reaches disk. All other fields (title, url, status, ids) are retained.
-Redaction happens at write time, so flipping a source to sensitive protects
-only items written after the flag is set; re-ingest to redact prior items.
+The **primary** sensitivity mechanism is per-item: the orchestrator reads each
+source's config `sensitive` flag and includes `"sensitive": true` in the item
+JSON on every `upsert-item` for that source (SKILL.md phase 2d). A `sensitive:
+true` on a **source entry** in state is a defensive fallback the engine also
+honors, but nothing seeds it today — the per-item flag is what enforces R28, so
+sensitivity works even though source entries carry only a `cursor`. On any
+`upsert-item` where either the item or its source entry is sensitive, the engine
+**drops `body` and `quote` before writing** — redacted content never reaches
+disk. All other fields (title, url, status, ids) are retained. Redaction happens
+at write time, so flipping a source to sensitive protects only items written
+after the flag is set; re-ingest to redact prior items.
 
 ## id-keyed merge rule
 
